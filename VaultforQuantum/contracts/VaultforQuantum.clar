@@ -27,6 +27,8 @@
 (define-constant ERR-REPLICA-THRESHOLD-EXCEEDED (err u208))
 (define-constant ERR-QUANTUM-SYNC-FAILED (err u209))
 (define-constant ERR-VAULT-CORRUPTED (err u210))
+(define-constant ERR-INVALID-CHECKSUM (err u211))
+(define-constant ERR-INVALID-PERMISSION-LEVEL (err u212))
 
 ;; Quantum Shard Registry (Enhanced Architecture)
 (define-map quantum-shards 
@@ -112,6 +114,26 @@
   )
 )
 
+;; NEW: Enhanced checksum validation
+(define-private (validate-integrity-checksum (checksum (buff 32)))
+  (and 
+    (> (len checksum) u0)
+    (is-eq (len checksum) u32) ;; Enforce exact 32-byte checksum
+    ;; Additional validation: ensure it's not all zeros (invalid checksum)
+    (not (is-eq checksum 0x0000000000000000000000000000000000000000000000000000000000000000))
+  )
+)
+
+;; NEW: Permission level validation
+(define-private (validate-permission-level (permission (string-ascii 20)))
+  (or 
+    (is-eq permission "read")
+    (is-eq permission "write")
+    (is-eq permission "admin")
+    (is-eq permission "owner")
+  )
+)
+
 (define-private (validate-node-status (node principal))
   (is-some (map-get? guardian-nodes node))
 )
@@ -162,7 +184,7 @@
         successful-operations: u0,
         failed-operations: u0,
         trust-score: genesis-trust-score,
-        last-heartbeat-block: block-height,
+        last-heartbeat-block: stacks-block-height,
         stake-amount: stake-amount,
         node-tier: node-tier,
         quantum-certified: quantum-certified
@@ -175,7 +197,7 @@
   )
 )
 
-;; Advanced Quantum Shard Storage
+;; Advanced Quantum Shard Storage - FIXED
 (define-public (store-quantum-shard 
                 (shard-hash (buff 32))
                 (shard-size uint)
@@ -186,6 +208,8 @@
     ;; Comprehensive input validation
     (asserts! (validate-shard-hash shard-hash) ERR-INVALID-PARAMETERS)
     (asserts! (validate-quantum-cipher quantum-cipher) ERR-INVALID-PARAMETERS)
+    ;; FIXED: Validate integrity checksum before using it
+    (asserts! (validate-integrity-checksum integrity-checksum) ERR-INVALID-CHECKSUM)
     (asserts! (<= shard-size max-data-shard-size) ERR-SHARD-OVERSIZED)
     (asserts! (and (>= replication-factor min-node-replicas) 
                    (<= replication-factor max-node-replicas)) ERR-INVALID-PARAMETERS)
@@ -203,18 +227,18 @@
       ;; Process payment
       (try! (stx-transfer? storage-cost tx-sender (as-contract tx-sender)))
       
-      ;; Store quantum shard metadata
+      ;; Store quantum shard metadata - NOW SAFE after validation
       (map-set quantum-shards
         { shard-hash: shard-hash, vault-owner: tx-sender }
         {
           shard-size: shard-size,
           quantum-cipher: quantum-cipher,
-          genesis-block-height: block-height,
+          genesis-block-height: stacks-block-height,
           active-node-count: u0,
           guardian-nodes: (list),
-          integrity-checksum: integrity-checksum,
+          integrity-checksum: integrity-checksum, ;; Now validated
           access-frequency: u0,
-          last-accessed-block: block-height
+          last-accessed-block: stacks-block-height
         }
       )
       
@@ -258,7 +282,7 @@
               trust-score: (optimize-trust-score 
                 (+ (get trust-score current-stats) total-adjustment)
               ),
-              last-heartbeat-block: block-height
+              last-heartbeat-block: stacks-block-height
             })
             ;; Failed operation path
             (merge current-stats {
@@ -266,7 +290,7 @@
               trust-score: (stabilize-trust-score 
                 (- (get trust-score current-stats) trust-penalty)
               ),
-              last-heartbeat-block: block-height
+              last-heartbeat-block: stacks-block-height
             })
           )
         )
@@ -299,7 +323,7 @@
         (merge shard-data {
           guardian-nodes: target-nodes,
           active-node-count: (len target-nodes),
-          last-accessed-block: block-height
+          last-accessed-block: stacks-block-height 
         })
       )
       
@@ -318,7 +342,7 @@
       { metric-type: metric-type }
       {
         total-value: (+ (get total-value existing-metric) value),
-        last-updated-block: block-height,
+        last-updated-block: stacks-block-height,
         trend-direction: trend
       }
     )
@@ -326,7 +350,7 @@
       { metric-type: metric-type }
       {
         total-value: value,
-        last-updated-block: block-height,
+        last-updated-block: stacks-block-height,
         trend-direction: trend
       }
     )
@@ -382,7 +406,7 @@
         guardian
         (merge guardian-stats {
           stake-amount: (- (get stake-amount guardian-stats) amount),
-          last-heartbeat-block: block-height
+          last-heartbeat-block: stacks-block-height
         })
       )
       
@@ -406,7 +430,7 @@
         total-operations: (+ (get successful-operations stats) (get failed-operations stats)),
         node-tier: (get node-tier stats),
         quantum-certified: (get quantum-certified stats),
-        days-since-heartbeat: (/ (- block-height (get last-heartbeat-block stats)) u144) ;; Assuming ~144 blocks per day
+        days-since-heartbeat: (/ (- stacks-block-height (get last-heartbeat-block stats)) u144) ;; Assuming ~144 blocks per day
       })
     )
   )
@@ -421,15 +445,17 @@
       total-nodes: (match total-nodes-metric some-metric (get total-value some-metric) u0),
       total-storage-gb: (match total-storage-metric some-metric (/ (get total-value some-metric) u1000000000) u0),
       total-migrations: (match migrations-metric some-metric (get total-value some-metric) u0),
-      network-uptime-blocks: (- block-height u0) ;; Blocks since genesis
+      network-uptime-blocks: (- stacks-block-height u0) ;; Blocks since genesis
     }
   )
 )
 
-;; Quantum Integrity Verification
+;; Quantum Integrity Verification - FIXED
 (define-read-only (verify-shard-integrity (shard-hash (buff 32)) (provided-checksum (buff 32)))
   (begin
     (asserts! (validate-shard-hash shard-hash) none)
+    ;; FIXED: Validate provided checksum before comparison
+    (asserts! (validate-integrity-checksum provided-checksum) none)
     (match (map-get? quantum-shards { shard-hash: shard-hash, vault-owner: tx-sender })
       shard-data
       (some (is-eq (get integrity-checksum shard-data) provided-checksum))
@@ -438,7 +464,7 @@
   )
 )
 
-;; Advanced Access Permission System
+;; Advanced Access Permission System - FIXED
 (define-public (grant-shard-access 
                 (shard-hash (buff 32))
                 (accessor principal)
@@ -452,17 +478,23 @@
       ERR-SHARD-MISSING
     )
     
+    ;; FIXED: Validate permission level before using it
+    (asserts! (validate-permission-level permission-level) ERR-INVALID-PERMISSION-LEVEL)
+    
     ;; Validate permission parameters
     (asserts! (> duration-blocks u0) ERR-INVALID-PARAMETERS)
     (asserts! (<= duration-blocks u1051200) ERR-INVALID-PARAMETERS) ;; Max 2 years
     
-    ;; Grant access
+    ;; FIXED: Additional validation for accessor (ensure it's not contract owner granting to themselves)
+    (asserts! (not (is-eq accessor tx-sender)) ERR-INVALID-PARAMETERS)
+    
+    ;; Grant access - NOW SAFE after validation
     (map-set access-permissions
-      { shard-hash: shard-hash, accessor: accessor }
+      { shard-hash: shard-hash, accessor: accessor } ;; Now validated
       {
-        permission-level: permission-level,
-        granted-block: block-height,
-        expires-block: (+ block-height duration-blocks),
+        permission-level: permission-level, ;; Now validated
+        granted-block: stacks-block-height,
+        expires-block: (+ stacks-block-height duration-blocks),
         granted-by: tx-sender
       }
     )
