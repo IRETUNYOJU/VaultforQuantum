@@ -27,6 +27,8 @@
 (define-constant ERR-REPLICA-THRESHOLD-EXCEEDED (err u208))
 (define-constant ERR-QUANTUM-SYNC-FAILED (err u209))
 (define-constant ERR-VAULT-CORRUPTED (err u210))
+(define-constant ERR-INVALID-CHECKSUM (err u211))
+(define-constant ERR-INVALID-PERMISSION-LEVEL (err u212))
 
 ;; Quantum Shard Registry (Enhanced Architecture)
 (define-map quantum-shards 
@@ -112,6 +114,26 @@
   )
 )
 
+;; NEW: Enhanced checksum validation
+(define-private (validate-integrity-checksum (checksum (buff 32)))
+  (and 
+    (> (len checksum) u0)
+    (is-eq (len checksum) u32) ;; Enforce exact 32-byte checksum
+    ;; Additional validation: ensure it's not all zeros (invalid checksum)
+    (not (is-eq checksum 0x0000000000000000000000000000000000000000000000000000000000000000))
+  )
+)
+
+;; NEW: Permission level validation
+(define-private (validate-permission-level (permission (string-ascii 20)))
+  (or 
+    (is-eq permission "read")
+    (is-eq permission "write")
+    (is-eq permission "admin")
+    (is-eq permission "owner")
+  )
+)
+
 (define-private (validate-node-status (node principal))
   (is-some (map-get? guardian-nodes node))
 )
@@ -175,7 +197,7 @@
   )
 )
 
-;; Advanced Quantum Shard Storage
+;; Advanced Quantum Shard Storage - FIXED
 (define-public (store-quantum-shard 
                 (shard-hash (buff 32))
                 (shard-size uint)
@@ -186,6 +208,8 @@
     ;; Comprehensive input validation
     (asserts! (validate-shard-hash shard-hash) ERR-INVALID-PARAMETERS)
     (asserts! (validate-quantum-cipher quantum-cipher) ERR-INVALID-PARAMETERS)
+    ;; FIXED: Validate integrity checksum before using it
+    (asserts! (validate-integrity-checksum integrity-checksum) ERR-INVALID-CHECKSUM)
     (asserts! (<= shard-size max-data-shard-size) ERR-SHARD-OVERSIZED)
     (asserts! (and (>= replication-factor min-node-replicas) 
                    (<= replication-factor max-node-replicas)) ERR-INVALID-PARAMETERS)
@@ -203,7 +227,7 @@
       ;; Process payment
       (try! (stx-transfer? storage-cost tx-sender (as-contract tx-sender)))
       
-      ;; Store quantum shard metadata
+      ;; Store quantum shard metadata - NOW SAFE after validation
       (map-set quantum-shards
         { shard-hash: shard-hash, vault-owner: tx-sender }
         {
@@ -212,7 +236,7 @@
           genesis-block-height: stacks-block-height,
           active-node-count: u0,
           guardian-nodes: (list),
-          integrity-checksum: integrity-checksum,
+          integrity-checksum: integrity-checksum, ;; Now validated
           access-frequency: u0,
           last-accessed-block: stacks-block-height
         }
@@ -426,10 +450,12 @@
   )
 )
 
-;; Quantum Integrity Verification
+;; Quantum Integrity Verification - FIXED
 (define-read-only (verify-shard-integrity (shard-hash (buff 32)) (provided-checksum (buff 32)))
   (begin
     (asserts! (validate-shard-hash shard-hash) none)
+    ;; FIXED: Validate provided checksum before comparison
+    (asserts! (validate-integrity-checksum provided-checksum) none)
     (match (map-get? quantum-shards { shard-hash: shard-hash, vault-owner: tx-sender })
       shard-data
       (some (is-eq (get integrity-checksum shard-data) provided-checksum))
@@ -438,7 +464,7 @@
   )
 )
 
-;; Advanced Access Permission System
+;; Advanced Access Permission System - FIXED
 (define-public (grant-shard-access 
                 (shard-hash (buff 32))
                 (accessor principal)
@@ -452,15 +478,21 @@
       ERR-SHARD-MISSING
     )
     
+    ;; FIXED: Validate permission level before using it
+    (asserts! (validate-permission-level permission-level) ERR-INVALID-PERMISSION-LEVEL)
+    
     ;; Validate permission parameters
     (asserts! (> duration-blocks u0) ERR-INVALID-PARAMETERS)
     (asserts! (<= duration-blocks u1051200) ERR-INVALID-PARAMETERS) ;; Max 2 years
     
-    ;; Grant access
+    ;; FIXED: Additional validation for accessor (ensure it's not contract owner granting to themselves)
+    (asserts! (not (is-eq accessor tx-sender)) ERR-INVALID-PARAMETERS)
+    
+    ;; Grant access - NOW SAFE after validation
     (map-set access-permissions
-      { shard-hash: shard-hash, accessor: accessor }
+      { shard-hash: shard-hash, accessor: accessor } ;; Now validated
       {
-        permission-level: permission-level,
+        permission-level: permission-level, ;; Now validated
         granted-block: stacks-block-height,
         expires-block: (+ stacks-block-height duration-blocks),
         granted-by: tx-sender
