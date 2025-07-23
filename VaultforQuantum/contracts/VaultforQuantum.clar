@@ -162,7 +162,7 @@
         successful-operations: u0,
         failed-operations: u0,
         trust-score: genesis-trust-score,
-        last-heartbeat-block: block-height,
+        last-heartbeat-block: stacks-block-height,
         stake-amount: stake-amount,
         node-tier: node-tier,
         quantum-certified: quantum-certified
@@ -209,12 +209,12 @@
         {
           shard-size: shard-size,
           quantum-cipher: quantum-cipher,
-          genesis-block-height: block-height,
+          genesis-block-height: stacks-block-height,
           active-node-count: u0,
           guardian-nodes: (list),
           integrity-checksum: integrity-checksum,
           access-frequency: u0,
-          last-accessed-block: block-height
+          last-accessed-block: stacks-block-height
         }
       )
       
@@ -258,7 +258,7 @@
               trust-score: (optimize-trust-score 
                 (+ (get trust-score current-stats) total-adjustment)
               ),
-              last-heartbeat-block: block-height
+              last-heartbeat-block: stacks-block-height
             })
             ;; Failed operation path
             (merge current-stats {
@@ -266,7 +266,7 @@
               trust-score: (stabilize-trust-score 
                 (- (get trust-score current-stats) trust-penalty)
               ),
-              last-heartbeat-block: block-height
+              last-heartbeat-block: stacks-block-height
             })
           )
         )
@@ -299,7 +299,7 @@
         (merge shard-data {
           guardian-nodes: target-nodes,
           active-node-count: (len target-nodes),
-          last-accessed-block: block-height
+          last-accessed-block: stacks-block-height 
         })
       )
       
@@ -318,7 +318,7 @@
       { metric-type: metric-type }
       {
         total-value: (+ (get total-value existing-metric) value),
-        last-updated-block: block-height,
+        last-updated-block: stacks-block-height,
         trend-direction: trend
       }
     )
@@ -326,7 +326,7 @@
       { metric-type: metric-type }
       {
         total-value: value,
-        last-updated-block: block-height,
+        last-updated-block: stacks-block-height,
         trend-direction: trend
       }
     )
@@ -382,7 +382,7 @@
         guardian
         (merge guardian-stats {
           stake-amount: (- (get stake-amount guardian-stats) amount),
-          last-heartbeat-block: block-height
+          last-heartbeat-block: stacks-block-height
         })
       )
       
@@ -406,7 +406,7 @@
         total-operations: (+ (get successful-operations stats) (get failed-operations stats)),
         node-tier: (get node-tier stats),
         quantum-certified: (get quantum-certified stats),
-        days-since-heartbeat: (/ (- block-height (get last-heartbeat-block stats)) u144) ;; Assuming ~144 blocks per day
+        days-since-heartbeat: (/ (- stacks-block-height (get last-heartbeat-block stats)) u144) ;; Assuming ~144 blocks per day
       })
     )
   )
@@ -421,7 +421,7 @@
       total-nodes: (match total-nodes-metric some-metric (get total-value some-metric) u0),
       total-storage-gb: (match total-storage-metric some-metric (/ (get total-value some-metric) u1000000000) u0),
       total-migrations: (match migrations-metric some-metric (get total-value some-metric) u0),
-      network-uptime-blocks: (- block-height u0) ;; Blocks since genesis
+      network-uptime-blocks: (- stacks-block-height u0) ;; Blocks since genesis
     }
   )
 )
@@ -461,8 +461,8 @@
       { shard-hash: shard-hash, accessor: accessor }
       {
         permission-level: permission-level,
-        granted-block: block-height,
-        expires-block: (+ block-height duration-blocks),
+        granted-block: stacks-block-height,
+        expires-block: (+ stacks-block-height duration-blocks),
         granted-by: tx-sender
       }
     )
